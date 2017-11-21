@@ -22,4 +22,6 @@
     <string name="flash_auto">Flash auto</string>
     <string name="flash_off">Flash off</string>
     <string name="flash_on">Flash on</string>
+    <string name="draw_line">Draw line</string>
+    <string name="facebook_app_id">366959893728481</string>
 </resources>

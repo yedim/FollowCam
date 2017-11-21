@@ -16,18 +16,29 @@
 
 package com.google.android.cameraview.demo;
 
+import static com.google.android.cameraview.demo.PreviewActivity.exifOrientationToDegrees;
+import static com.google.android.cameraview.demo.PreviewActivity.rotate;
+
 import android.Manifest;
 import android.app.Dialog;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Vibrator;
+import android.provider.MediaStore;
 import android.support.annotation.NonNull;
+import android.support.annotation.RequiresApi;
 import android.support.annotation.StringRes;
 import android.support.design.widget.FloatingActionButton;
 import android.support.v4.app.ActivityCompat;
@@ -39,10 +50,15 @@ import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.util.Log;
-import android.view.Menu;
-import android.view.MenuItem;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.animation.LinearInterpolator;
+import android.widget.HorizontalScrollView;
+import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.RelativeLayout;
+import android.widget.SeekBar;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import com.google.android.cameraview.AspectRatio;
@@ -61,16 +77,24 @@ import java.util.Set;
  */
 public class MainActivity extends AppCompatActivity implements
         ActivityCompat.OnRequestPermissionsResultCallback,
-        AspectRatioFragment.Listener {
+        AspectRatioFragment.Listener
+{
+
+    boolean check_pose = false;
+    boolean check_filter = false;
 
     private static final int SELECT_PHOTO = 500;
     private ImageView chooseImage;
     private ImageView imageView;
+    private ImageView filterView;
+
+    private SeekBar barOpacity;
+    private TextView textOpacitySetting;
 
     private static final String TAG = "MainActivity";
 
     private static final int REQUEST_CAMERA_PERMISSION = 1;
-
+    private static final int REQUEST_CAMERA_CODE=100;
     private static final String FRAGMENT_DIALOG = "dialog";
 
     private static final int[] FLASH_OPTIONS = {
@@ -80,9 +104,9 @@ public class MainActivity extends AppCompatActivity implements
     };
 
     private static final int[] FLASH_ICONS = {
-            R.mipmap.ic_flash_auto,
-            R.mipmap.ic_flash_off,
-            R.mipmap.ic_flash_on,
+            R.mipmap.flash_auto,
+            R.mipmap.flash_off,
+            R.mipmap.flash_on,
     };
 
     private static final int[] FLASH_TITLES = {
@@ -92,22 +116,38 @@ public class MainActivity extends AppCompatActivity implements
     };
 
     private int mCurrentFlash;
-
     private CameraView mCameraView;
-
     private Handler mBackgroundHandler;
 
-    private View.OnClickListener mOnClickListener = new View.OnClickListener() {
-        @Override
-        public void onClick(View v) {
-            switch (v.getId()) {
-                case R.id.take_picture:
-                    if (mCameraView != null) {
-                        mCameraView.takePicture();
-                    }
-                    break;
-            }
-        }
+    ImageButton pose_btn;
+    HorizontalScrollView scrollView_pose;
+    HorizontalScrollView scrollView_filter;
+    ImageView imgV[]=new ImageView[10];
+    ImageView filterV[]=new ImageView[10];
+    private boolean camera_front=false; //전면(true)/후면(false)
+    private String resoure_filter;
+
+
+    // 드래그, 줌, 회전
+    float scalediff;
+    private static final int NONE = 0;
+    private static final int DRAG = 1;
+    private static final int ZOOM = 2;
+    private int mode = NONE;
+    private float oldDist = 1f;
+    private float d = 0f;
+    private float newRot = 0f;
+
+    //튜토리얼
+    short execution;
+    View tutorialview;
+    ImageView tutorialImgview1, tutorialImgview2, tutorialImgview3, tutorialImgview4, tutorialImgview5;
+    Vibrator vibrator;
+
+    private static final int[] pose_white = {
+            R.mipmap.flash_auto,
+            R.mipmap.flash_off,
+            R.mipmap.flash_on,
     };
 
     @Override
@@ -115,17 +155,308 @@ public class MainActivity extends AppCompatActivity implements
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        vibrator = (Vibrator)getSystemService(Context.VIBRATOR_SERVICE);
+        customToolbar();
+
+        int imageid=R.id.imgview01;
+        for(int i=0; i<10;i++) {
+            imgV[i] = (ImageView) findViewById(imageid);
+            imageid++;
+        }
+        // 포즈 선택 버튼 별 구현 ....
+        imgV[0].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                imageView.setImageResource(R.mipmap.select_pose_01);
+            }
+        });
+        imgV[1].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                imageView.setImageResource(R.mipmap.select_pose_02);
+            }
+        });
+        imgV[2].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                imageView.setImageResource(R.mipmap.select_pose_03);
+            }
+        });
+        imgV[3].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                imageView.setImageResource(R.mipmap.select_pose_04);
+            }
+        });
+        imgV[4].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                imageView.setImageResource(R.mipmap.select_pose_05);
+            }
+        });
+        imgV[5].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                imageView.setImageResource(R.mipmap.select_pose_06);
+            }
+        });
+        imgV[6].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                imageView.setImageResource(R.mipmap.select_pose_07);
+            }
+        });
+        imgV[7].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                imageView.setImageResource(R.mipmap.select_pose_08);
+            }
+        });
+        imgV[8].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                imageView.setImageResource(R.mipmap.select_pose_09);
+            }
+        });
+        imgV[9].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                imageView.setImageResource(R.mipmap.select_pose_10);
+            }
+        });
+
+        int filter_id=R.id.filter0;
+        for(int i=0; i<10;i++)
+        {
+            filterV[i]=((ImageView)findViewById(filter_id));
+            filter_id++;
+        }
+
+        filterV[0].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                filterView.setImageResource(R.mipmap.f_0);
+                resoure_filter=String.valueOf(R.mipmap.f_0);
+            }
+        });
+        filterV[1].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                filterView.setImageResource(R.mipmap.f_1);
+                resoure_filter=String.valueOf(R.mipmap.f_1);
+            }
+        });
+        filterV[2].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                filterView.setImageResource(R.mipmap.f_2);
+                resoure_filter=String.valueOf(R.mipmap.f_2);
+            }
+        });
+        filterV[3].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                filterView.setImageResource(R.mipmap.f_3);
+                resoure_filter=String.valueOf(R.mipmap.f_3);
+            }
+        });
+        filterV[4].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                filterView.setImageResource(R.mipmap.f_4);
+                resoure_filter=String.valueOf(R.mipmap.f_4);
+            }
+        });
+        filterV[5].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                filterView.setImageResource(R.mipmap.f_5);
+                resoure_filter=String.valueOf(R.mipmap.f_5);
+            }
+        });
+        filterV[6].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                filterView.setImageResource(R.mipmap.f_6);
+                resoure_filter=String.valueOf(R.mipmap.f_6);
+            }
+        });
+        filterV[7].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                filterView.setImageResource(R.mipmap.f_7);
+                resoure_filter=String.valueOf(R.mipmap.f_7);
+            }
+        });
+        filterV[8].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                filterView.setImageResource(R.mipmap.f_8);
+                resoure_filter=String.valueOf(R.mipmap.f_8);
+            }
+        });
+        filterV[9].setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                filterView.setImageResource(R.mipmap.f_9);
+                resoure_filter=String.valueOf(R.mipmap.f_9);
+            }
+        });
+
+
+        scrollView_pose = (HorizontalScrollView)findViewById(R.id.scrollView_pose);
+        scrollView_pose.setVisibility(View.GONE);
+        scrollView_filter = (HorizontalScrollView)findViewById(R.id.scrollView_filter);
+        scrollView_filter.setVisibility(View.GONE);
+
         chooseImage=(ImageView) findViewById(R.id.chooseImage);
         imageView=(ImageView)findViewById(R.id.imageView);
+        filterView=(ImageView)findViewById(R.id.filter_imageView);
+
+        barOpacity = (SeekBar)findViewById(R.id.opacityBar);
+        textOpacitySetting = (TextView)findViewById(R.id.opacityText);
+
+        // 포즈 드래그, 줌, 회전
+        RelativeLayout.LayoutParams layoutParams = new RelativeLayout.LayoutParams(500, 500);
+        layoutParams.leftMargin = 380;
+        layoutParams.topMargin = 400;
+        layoutParams.bottomMargin = -250;
+        layoutParams.rightMargin = -250;
+        imageView.setLayoutParams(layoutParams);
+
+        imageView.setOnTouchListener(new View.OnTouchListener() {
+
+            RelativeLayout.LayoutParams parms;
+            int startwidth;
+            int startheight;
+            float dx = 0, dy = 0, x = 0, y = 0;
+            float angle = 0;
+
+            @RequiresApi(api = Build.VERSION_CODES.ICE_CREAM_SANDWICH)
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                final ImageView view = (ImageView) v;
+
+//                ((BitmapDrawable)view.getDrawable()).setAntiAlias(true);
+                switch (event.getAction() & MotionEvent.ACTION_MASK) {
+                    case MotionEvent.ACTION_DOWN:
+
+                        parms = (RelativeLayout.LayoutParams) view.getLayoutParams();
+                        startwidth = parms.width;
+                        startheight = parms.height;
+                        dx = event.getRawX() - parms.leftMargin;
+                        dy = event.getRawY() - parms.topMargin;
+                        mode = DRAG;
+                        break;
+
+                    case MotionEvent.ACTION_POINTER_DOWN:
+                        oldDist = spacing(event);
+                        if (oldDist > 10f) {
+                            mode = ZOOM;
+                        }
+                        d = rotation(event);
+                        break;
+
+                    case MotionEvent.ACTION_UP:
+                        break;
+
+                    case MotionEvent.ACTION_POINTER_UP:
+                        mode = NONE;
+                        break;
+
+                    case MotionEvent.ACTION_MOVE:
+                        if (mode == DRAG) {
+                            x = event.getRawX();
+                            y = event.getRawY();
+
+                            parms.leftMargin = (int) (x - dx);
+                            parms.topMargin = (int) (y - dy);
+
+                            parms.rightMargin = 0;
+                            parms.bottomMargin = 0;
+                            parms.rightMargin = parms.leftMargin + (5 * parms.width);
+                            parms.bottomMargin = parms.topMargin + (10 * parms.height);
+
+                            view.setLayoutParams(parms);
+
+                        } else if (mode == ZOOM) {
+                            if (event.getPointerCount() == 2) {
+                                newRot = rotation(event);
+                                float r = newRot - d;
+                                angle = r;
+
+                                x = event.getRawX();
+                                y = event.getRawY();
+
+                                float newDist = spacing(event);
+                                if (newDist > 10f) {
+                                    float scale = newDist / oldDist * view.getScaleX();
+                                    if (scale > 0.6) {
+                                        scalediff = scale;
+                                        view.setScaleX(scale);
+                                        view.setScaleY(scale);
+
+                                    }
+                                }
+
+                                view.animate().rotationBy(angle).setDuration(0).setInterpolator(new LinearInterpolator()).start();
+
+                                x = event.getRawX();
+                                y = event.getRawY();
+
+                                parms.leftMargin = (int) ((x - dx) + scalediff);
+                                parms.topMargin = (int) ((y - dy) + scalediff);
+
+                                parms.rightMargin = 0;
+                                parms.bottomMargin = 0;
+                                parms.rightMargin = parms.leftMargin + (5 * parms.width);
+                                parms.bottomMargin = parms.topMargin + (10 * parms.height);
+
+                                view.setLayoutParams(parms);
+
+
+                            }
+                        }
+                        break;
+                }
+                return true;
+            }
+        });
+
+        pose_btn = (ImageButton)findViewById(R.id.pose);
+        pose_btn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                check_pose = true;
+
+                scrollView_filter.setVisibility(View.GONE);
+                scrollView_pose.setVisibility(View.VISIBLE);
+            }
+        });
+
+        ImageButton select_filter = (ImageButton)findViewById(R.id.select_filter);
+        select_filter.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                check_filter = true;
+                scrollView_pose.setVisibility(View.GONE);
+                scrollView_filter.setVisibility(View.VISIBLE);
+            }
+        });
 
         mCameraView = (CameraView) findViewById(R.id.camera);
         if (mCameraView != null) {
             mCameraView.addCallback(mCallback);
         }
+
+
+
         FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.take_picture);
         if (fab != null) {
             fab.setOnClickListener(mOnClickListener);
         }
+
+
 
         Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
@@ -133,7 +464,105 @@ public class MainActivity extends AppCompatActivity implements
         if (actionBar != null) {
             actionBar.setDisplayShowTitleEnabled(false);
         }
+
+
+        // 투명도
+        int alpha = barOpacity.getProgress();
+        textOpacitySetting.setText(String.valueOf(alpha));
+        imageView.setAlpha(alpha);
+        barOpacity.setOnSeekBarChangeListener(barOpacityOnSeekBarChangeListener);
+
+
+        //튜토리얼 숨기기
+        execution = 0;
+        tutorialview = (View)findViewById(R.id.hide_01);
+        tutorialImgview1 = (ImageView)findViewById(R.id.hide_02);
+        tutorialImgview2 = (ImageView)findViewById(R.id.hide_03);
+        tutorialImgview3 = (ImageView)findViewById(R.id.hide_04);
+        tutorialImgview4 = (ImageView)findViewById(R.id.hide_05);
+        tutorialImgview5 = (ImageView)findViewById(R.id.hide_06);
+
+        tutorialview.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                if (execution==0){
+                    tutorialImgview1.setVisibility(View.GONE);
+                    tutorialImgview2.setVisibility(View.VISIBLE);
+                    execution=1;
+                }
+                else if (execution==1){
+                    tutorialImgview2.setVisibility(View.GONE);
+                    tutorialImgview3.setVisibility(View.VISIBLE);
+                    execution=2;
+                }
+                else if (execution==2){
+                    tutorialImgview3.setVisibility(View.GONE);
+                    tutorialImgview4.setVisibility(View.VISIBLE);
+                    execution=3;
+                }
+                else if (execution==3){
+                    tutorialImgview4.setVisibility(View.GONE);
+                    tutorialImgview5.setVisibility(View.VISIBLE);
+                    execution=4;
+                }
+                else if (execution==4){
+                    tutorialview.setVisibility(View.GONE);
+                    tutorialImgview5.setVisibility(View.GONE);
+                    execution=5;
+                }
+                return false;
+            }
+        });
+    } // onCreate end
+
+
+    //포즈 선택시 다른 여백 터치 -> 선택창 안보이게
+    public boolean onTouchEvent(MotionEvent event) {
+        int action = event.getAction();
+        switch (action) {
+            case MotionEvent.ACTION_DOWN:
+                if(check_pose || check_filter){
+                    check_pose = false;
+                    scrollView_pose.setVisibility(View.GONE);
+                    scrollView_filter.setVisibility(View.GONE);
+                }
+        }
+        return super.onTouchEvent(event);
     }
+
+
+    private View.OnClickListener mOnClickListener = new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    switch (v.getId()) {
+                        case R.id.take_picture:
+                            if (mCameraView != null) {
+                                vibrator.vibrate(50);
+                                mCameraView.takePicture();
+
+                            }
+                            break;
+                    }
+        }
+    };
+
+    //SeekBar-Opacity
+    SeekBar.OnSeekBarChangeListener barOpacityOnSeekBarChangeListener =
+            new SeekBar.OnSeekBarChangeListener(){
+
+                @Override
+                public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                    int alpha = barOpacity.getProgress();
+                    textOpacitySetting.setText(String.valueOf(alpha));
+                    imageView.setAlpha(alpha);   //deprecated
+                    //image.setImageAlpha(alpha); //for API Level 16+
+                }
+                @Override
+                public void onStartTrackingTouch(SeekBar seekBar) {}
+                @Override
+                public void onStopTrackingTouch(SeekBar seekBar) {}
+
+            };
 
     //open image in gallery
     public void ChooseImage(View v){
@@ -146,6 +575,7 @@ public class MainActivity extends AppCompatActivity implements
     }
 
     //take image
+    @RequiresApi(api = Build.VERSION_CODES.JELLY_BEAN)
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         switch(requestCode) {
@@ -153,12 +583,33 @@ public class MainActivity extends AppCompatActivity implements
                 if(resultCode == RESULT_OK){
                     Uri selectedImage = data.getData();
                     if(selectedImage !=null){
-                        imageView.setImageURI(selectedImage);
+                        //갤러리에서 가져온 사진 회전 오류 해결
+                        Uri imgUri = data.getData();
+                        String imagePath = getRealPathFromURI(imgUri); // path 경로
+                        ExifInterface exif = null;
+                        try {
+                            exif = new ExifInterface(imagePath);
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                        int exifOrientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+                        int exifDegree = exifOrientationToDegrees(exifOrientation);
+
+                        Bitmap bitmap = BitmapFactory.decodeFile(imagePath);//경로를 통해 비트맵으로 전환
+                        imageView.setImageBitmap(rotate(bitmap, exifDegree));//이미지 뷰에 비트맵 넣기
+
                     }
                 }
         }
     }
 
+    public String getRealPathFromURI(Uri contentUri) {
+        String[] proj = {MediaStore.Images.Media.DATA};
+        Cursor cursor = managedQuery(contentUri, proj, null, null, null);
+        int column_index = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
+        cursor.moveToFirst();
+        return cursor.getString(column_index);
+    }
 
 
     @Override
@@ -217,16 +668,44 @@ public class MainActivity extends AppCompatActivity implements
         }
     }
 
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        getMenuInflater().inflate(R.menu.main, menu);
-        return true;
-    }
+    public void customToolbar(){
+        final ImageView switch_flash = (ImageView)findViewById(R.id.switch_flash);
+        switch_flash.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (mCameraView != null) {
+                    mCurrentFlash = (mCurrentFlash + 1) % FLASH_OPTIONS.length;
+                    switch_flash.setImageResource(FLASH_ICONS[mCurrentFlash]);
 
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        switch (item.getItemId()) {
-            case R.id.aspect_ratio:
+                    mCameraView.setFlash(FLASH_OPTIONS[mCurrentFlash]);
+                }
+            }
+        });
+
+        final ImageView switch_camera = (ImageView)findViewById(R.id.switch_camera);
+        switch_camera.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (mCameraView != null) {
+                    int facing = mCameraView.getFacing();
+                    if(facing ==CameraView.FACING_BACK){//전면
+                        camera_front=true;
+                        Toast.makeText(getApplicationContext(),String.valueOf(camera_front),Toast.LENGTH_SHORT).show();
+                    }
+                    else{//후면
+                        camera_front=false;
+                        Toast.makeText(getApplicationContext(),String.valueOf(camera_front),Toast.LENGTH_SHORT).show();
+                    }
+                    mCameraView.setFacing(facing == CameraView.FACING_FRONT ?
+                            CameraView.FACING_BACK : CameraView.FACING_FRONT);
+                }
+            }
+        });
+
+        final ImageView aspect_ratio = (ImageView)findViewById(R.id.aspect_ratio);
+        aspect_ratio.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
                 FragmentManager fragmentManager = getSupportFragmentManager();
                 if (mCameraView != null
                         && fragmentManager.findFragmentByTag(FRAGMENT_DIALOG) == null) {
@@ -235,26 +714,20 @@ public class MainActivity extends AppCompatActivity implements
                     AspectRatioFragment.newInstance(ratios, currentRatio)
                             .show(fragmentManager, FRAGMENT_DIALOG);
                 }
-                return true;
-            case R.id.switch_flash:
-                if (mCameraView != null) {
-                    mCurrentFlash = (mCurrentFlash + 1) % FLASH_OPTIONS.length;
-                    item.setTitle(FLASH_TITLES[mCurrentFlash]);
-                    item.setIcon(FLASH_ICONS[mCurrentFlash]);
-                    mCameraView.setFlash(FLASH_OPTIONS[mCurrentFlash]);
-                }
-                return true;
-            case R.id.switch_camera:
-                if (mCameraView != null) {
-                    int facing = mCameraView.getFacing();
-                    mCameraView.setFacing(facing == CameraView.FACING_FRONT ?
-                            CameraView.FACING_BACK : CameraView.FACING_FRONT);
-                }
-                return true;
-        }
-        return super.onOptionsItemSelected(item);
-    }
+            }
+        });
 
+        final ImageView draw_line = (ImageView)findViewById(R.id.pencil_draw);
+        draw_line.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Toast.makeText(MainActivity.this,"그림그리기",Toast.LENGTH_LONG).show();
+                Intent intent = new Intent(MainActivity.this,DrawActivity.class);
+                startActivity(intent);
+            }
+        });
+
+    }
     public void onAspectRatioSelected(@NonNull AspectRatio ratio) {
         if (mCameraView != null) {
             Toast.makeText(this, ratio.toString(), Toast.LENGTH_SHORT).show();
@@ -287,12 +760,19 @@ public class MainActivity extends AppCompatActivity implements
         @Override
         public void onPictureTaken(CameraView cameraView, final byte[] data) {
             Log.d(TAG, "onPictureTaken " + data.length);
-            Toast.makeText(cameraView.getContext(), R.string.picture_taken, Toast.LENGTH_SHORT)
-                    .show();
+            //Toast.makeText(cameraView.getContext(), R.string.picture_taken, Toast.LENGTH_SHORT).show();
             getBackgroundHandler().post(new Runnable() {
                 @Override
                 public void run() {
-                    File file = new File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "picture.jpg");
+                    mCameraView.buildDrawingCache();
+                    Bitmap bm = mCameraView.getDrawingCache();
+
+                    String root = Environment.getExternalStorageDirectory().toString();
+                    File myDir = new File(root + "/followcam_images");
+                    myDir.mkdirs();
+                    //Toast.makeText(MainActivity.this,myDir.getPath(),Toast.LENGTH_SHORT).show();
+                    String filename="picture"+System.currentTimeMillis()+".jpg";
+                    File file = new File(myDir, filename);
                     OutputStream os = null;
                     try {
                         os = new FileOutputStream(file);
@@ -308,7 +788,19 @@ public class MainActivity extends AppCompatActivity implements
                                 // Ignore
                             }
                         }
+                        //image scanning
+                        bm.compress(Bitmap.CompressFormat.JPEG, 100, os);
+                        sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE,Uri.parse("file://"+myDir.getPath()+"/"+filename)));
+
+                        String foldername=myDir.getPath()+"/"+filename;
+                        Intent intent = new Intent(getApplicationContext(), PreviewActivity.class);
+                        intent.putExtra("foldername",foldername);
+                        intent.putExtra("filename",filename);
+                        intent.putExtra("camera_front",camera_front);
+                        intent.putExtra("filter_view",resoure_filter);
+                        startActivity(intent);
                     }
+
                 }
             });
         }
@@ -364,6 +856,22 @@ public class MainActivity extends AppCompatActivity implements
                     .create();
         }
 
+    }
+
+
+    // 포즈
+    private float spacing(MotionEvent event) {
+        float x = event.getX(0) - event.getX(1);
+        float y = event.getY(0) - event.getY(1);
+        return (float) Math.sqrt(x * x + y * y);
+    }
+
+    // 포즈 회전
+    private float rotation(MotionEvent event) {
+        double delta_x = (event.getX(0) - event.getX(1));
+        double delta_y = (event.getY(0) - event.getY(1));
+        double radians = Math.atan2(delta_y, delta_x);
+        return (float) Math.toDegrees(radians);
     }
 
 }

@@ -14,23 +14,44 @@
 <manifest package="com.google.android.cameraview.demo"
           xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="18"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.VIBRATE"/>
 
     <application
         android:allowBackup="true"
         android:icon="@mipmap/followcam1"
-        android:label="FollowCam"
+        android:label="팔로우캠"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Demo">
+        android:theme="@style/Theme.Demo"
+        android:hardwareAccelerated="true">
 
-        <activity android:name=".MainActivity">
+
+        <activity android:name=".SplashActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <activity android:name=".MainActivity"></activity>
+        <activity android:name=".ViewPageActivity"></activity>
+
+        <activity android:name=".DrawActivity"></activity>
+        <activity android:name=".PreviewActivity"
+            android:configChanges="keyboardHidden|orientation">
+            <!--카메라 회전시에도 기존의 엑티비티를 제거하지 않도록 방지하기 위해-->
+        </activity>
+
+        <meta-data
+            android:name="com.facebook.sdk.ApplicationId"
+            android:value="@string/facebook_app_id"/>
+
+
+        <provider
+            android:authorities="com.facebook.app.FacebookContentProvider366959893728481"
+            android:name="com.facebook.FacebookContentProvider"
+            android:exported="true"/>
 
     </application>
 
